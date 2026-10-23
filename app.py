@@ -1,45 +1,41 @@
-import time
+import os
 import streamlit as st
-from workflow import build_graph
-from agents import get_model
+from workflow import run_workflow
 
-st.set_page_config(page_title="Multi-Agent Feedback Lab", page_icon="🤖", layout="wide")
-st.title("🤖 Multi-Agent Customer Feedback Lab")
-st.caption("Advanced AI classroom | Streamlit + LangGraph + local Qwen 0.5B (no paid API)")
-with st.sidebar:
-    st.header("How it works")
-    st.markdown("1. **Classifier agent** labels feedback.\n2. **LangGraph router** selects a branch.\n3. **Response agent** drafts the reply.\n4. Uncertain cases go to human review.")
-    st.info("First run downloads the model and can take a few minutes. Free hosting has memory and CPU limits.")
-    if st.button("Load local model now"):
-        with st.spinner("Downloading/loading Qwen..."):
+st.set_page_config(page_title='Multi-Agent Feedback Lab', page_icon='🤖')
+st.title('🤖 Multi-Agent Customer Feedback Lab')
+st.caption('Advanced AI classroom | Streamlit + LangGraph + Groq-hosted open-weight model')
+st.markdown('**Workflow:** Feedback → Sentiment agent → Positive or Negative response agent')
+
+try:
+    if 'GROQ_API_KEY' in st.secrets:
+        os.environ['GROQ_API_KEY'] = st.secrets['GROQ_API_KEY']
+    if 'GROQ_MODEL' in st.secrets:
+        os.environ['GROQ_MODEL'] = st.secrets['GROQ_MODEL']
+except FileNotFoundError:
+    pass
+
+examples = ['I love your service! The staff were helpful.', 'I hate your services. The delivery was late.']
+example = st.selectbox('Example feedback (optional)', ['Write my own'] + examples)
+feedback = st.text_area('Customer feedback', value='' if example == 'Write my own' else example, height=120)
+if st.button('Run multi-agent workflow', type='primary'):
+    if not feedback.strip():
+        st.warning('Enter some feedback first.')
+    elif not os.getenv('GROQ_API_KEY'):
+        st.error('GROQ_API_KEY is missing. Add it in Streamlit Community Cloud → App settings → Secrets.')
+    else:
+        with st.spinner('Running agents...'):
             try:
-                get_model()
-                st.success("Model loaded")
-            except Exception as e:
-                st.error(f"Model failed to load: {e}")
-
-examples = ["I love your service! The staff were excellent.",
-            "I hate your services. The delivery was late.",
-            "The service was okay, but I have mixed feelings."]
-example = st.selectbox("Example feedback", ["Write my own"] + examples)
-feedback = st.text_area("Customer feedback", value="" if example == "Write my own" else example, height=130)
-left, right = st.columns([2, 1])
-with right:
-    st.subheader("Workflow")
-    st.code("START\n  ↓\nClassifier\n  ├─ Positive → Positive agent\n  ├─ Negative → Negative agent\n  └─ Uncertain → Human review\n  ↓\n END", language=None)
-with left:
-    if st.button("Run multi-agent workflow", type="primary", disabled=not feedback.strip()):
-        try:
-            start = time.perf_counter()
-            with st.spinner("Agents are working..."):
-                result = build_graph().invoke({"feedback": feedback.strip(), "path": []})
-            elapsed = time.perf_counter() - start
-            st.metric("Detected sentiment", result["sentiment"])
-            st.subheader("Agent response")
-            st.write(result["response"])
-            st.subheader("Execution trace")
-            st.write(" → ".join(result["path"]))
-            st.caption(f"Elapsed time: {elapsed:.1f} seconds. Model output may vary; small models can make mistakes.")
-        except Exception as e:
-            st.error(f"Execution failed: {e}")
-            st.info("Check build logs, available RAM, and model download access. See README troubleshooting.")
+                result = run_workflow(feedback.strip())
+            except Exception as exc:
+                st.error(f'Workflow failed: {exc}')
+            else:
+                st.success('Workflow complete')
+                st.metric('Sentiment agent', result['sentiment'])
+                st.write('**Selected response agent:**', 'Positive' if result['sentiment'] == 'Positive' else 'Negative')
+                st.write('**Final response:**')
+                st.info(result['response'])
+                with st.expander('Workflow state (for students)'):
+                    st.json(result)
+st.divider()
+st.caption('Two LLM requests are made per workflow run. Free Groq API usage is rate-limited; never commit API keys to GitHub.')
